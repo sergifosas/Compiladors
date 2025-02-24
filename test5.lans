@@ -1,0 +1,6 @@
+programa TestPer
+    per i en rang(0,5) fer
+        escriureln(i);
+    fper
+fprograma
+

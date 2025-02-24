@@ -1,0 +1,27 @@
+funcio suma(a: enter, b: enter) retorna enter
+    variables
+        resultat: enter;
+    fvariables
+
+    resultat := a + b;
+    retorna resultat
+    enter;
+ffuncio
+
+programa TestFuncio
+    variables
+        x: enter;
+        y: enter;
+        resultat: enter;
+    fvariables
+
+    x := 3;
+    y := 7;
+    resultat := suma(x, y);
+    escriureln("Resultat de la suma: ", resultat);
+fprograma
+
+
+
+
+

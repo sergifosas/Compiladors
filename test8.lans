@@ -1,0 +1,5 @@
+programa TestIO
+    escriure("Introdueix un nombre: ");
+    llegir(x:enter);
+    escriureln("Has introduït: ", x);
+fprograma

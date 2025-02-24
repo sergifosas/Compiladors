@@ -1,0 +1,7 @@
+programa TipusBasics
+    a := 5;
+    b := 3.14;
+    c := cert;
+    d := "Hola!";
+    escriure(a, " ", b, " ", c, " ", d);
+fprograma

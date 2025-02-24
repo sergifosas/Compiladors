@@ -1,0 +1,10 @@
+programa TestCondicional
+    a := 10;
+    si a > 5 llavors
+        escriureln("A és més gran que 5");
+    altrament
+        escriureln("A no és més gran que 5");
+    fsi
+fprograma
+
+

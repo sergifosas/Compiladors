@@ -1,0 +1,6 @@
+programa PromocioTipus
+    x := 3;
+    y := 2.5;
+    z := x + y;  // Ha de promocionar `x` a real automàticament.
+    escriureln(z);
+fprograma

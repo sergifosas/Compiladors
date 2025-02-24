@@ -1,0 +1,8 @@
+programa TestMentre
+    x := 3;
+    mentre x > 0 fer
+        escriureln(x);
+        x := x - 1;
+    fmentre
+fprograma
+

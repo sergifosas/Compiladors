@@ -1,0 +1,15 @@
+
+tipus
+    Coordenada : tupla [x: enter, y: enter] ftupla
+ftipus
+
+programa test
+variables
+    a: enter;
+    b: real;
+    c: boolea;
+    d: Coordenada;
+    e: Vector;
+fvariables
+a:= 1;
+fprograma
