@@ -71,7 +71,7 @@ declaracio_variable
             }
         } else if ($ID.text != null) {
             // Si es un ID, asumimos que es un tipo definido por el usuario
-            tipusChar = 'U'; // 'U' para tipos definidos por el usuario
+            tipusChar = 'U';
         }
 
         if (!TS.existeix($ID.text)) {
@@ -155,39 +155,52 @@ sentencia returns [Vector<Long> trad]
           | instruccio_io SEMICOLON {$trad = $instruccio_io.trad;};
 
 // Assignació
+// Assignació
 assignacio returns [Vector<Long> trad]
-    @init 	{
-	    $trad=new Vector<Long>(100);
-    }
-    : id=ID ASSIGN expr {
+@init {
+    $trad = new Vector<Long>(100);
+}
+: id=ID ASSIGN expr {
     if (!TS.existeix($id.text)) {
-
+        // Si la variable no existeix, la declarem automàticament
         TS.inserir($id.text, new Registre($id.text, $expr.tipus));
         System.out.println("DEBUG: Primera assignació -> " + $id.text + " és de tipus " + $expr.tipus);
-    } else {
-        Registre r = TS.obtenir($id.text);
+    }
 
-        if (r == null) {
-            System.out.println("Error: Variable " + $id.text + " no declarada.");
+    Registre r = TS.obtenir($id.text);
+
+    if (r == null) {
+        System.out.println("Error: Variable " + $id.text + " no declarada.");
+        errorSemantico = true;
+    } else {
+        char tipusVar = r.getTipus();
+        char tipusExpr = $expr.tipus;
+
+        System.out.println("DEBUG: Assignació -> " + $id.text + " (" + tipusVar + ") := " + $expr.text + " (" + tipusExpr + ")");
+
+        if (tipusExpr == 'R' && tipusVar == 'I') {
+            System.out.println("Error: No es pot assignar un real (" + $expr.text + ") a la variable " + $id.text + " de tipus enter.");
+            errorSemantico = true;
+        }
+        else if (tipusExpr != tipusVar && !(tipusExpr == 'I' && tipusVar == 'R')) {
+            System.out.println("Error: Tipus incompatibles en l'assignació. No es pot assignar " + tipusExpr + " a " + tipusVar);
             errorSemantico = true;
         } else {
-            char tipusVar = r.getTipus();
-            char tipusExpr = $expr.tipus;
 
-            System.out.println("DEBUG: Assignació -> " + $id.text + " (" + tipusVar + ") := " + $expr.text + " (" + tipusExpr + ")");
+            $trad = $expr.trad;
 
-            if (tipusExpr == 'R' && tipusVar == 'I') {
-                System.out.println("Error: No es pot assignar un real (" + $expr.text + ") a la variable " + $id.text + " de tipus enter.");
-                errorSemantico = true;
+            if (tipusVar == 'R') {
+                $trad.add(x.FSTORE);
+            } else if (tipusVar == 'I' || tipusVar == 'B') {
+                $trad.add(x.ISTORE);
             }
 
-            else if (tipusExpr != tipusVar && !(tipusExpr == 'I' && tipusVar == 'R')) {
-                System.out.println("Error: Tipus incompatibles en l'assignació. No es pot assignar " + tipusExpr + " a " + tipusVar);
-                errorSemantico = true;
-            }
+            $trad.add(new Long(r.getAdreca()));
         }
     }
-};
+}
+;
+
 
 expr_booleana returns [char tipus, Vector<Long> trad]
 @init 	{
@@ -324,59 +337,326 @@ crida_funcio returns [char tipus, Vector<Long> trad]
     }
 ;
 
-// Condicional (corregit segons enunciat)
+// Condicional
 condicional returns [Vector<Long> trad]
-    : IF cond=expr_booleana THEN bloc_sentencies
-              (ELSEIF cond2=expr_booleana THEN bloc_sentencies)*
-              (ELSE bloc_sentencies)?
-              ENDIF {
+@init {
+    $trad = new Vector<Long>(100);
+    Vector<Long> tradCondicio = new Vector<Long>(100);
+    Vector<Vector<Long>> vectorSentencies = new Vector<>();
+    Vector<Long> tradFinal = new Vector<Long>(100);
+}
+: IF cond=expr_booleana THEN (s1=bloc_sentencies {tradCondicio.addAll($s1.trad);})*
+  (ELSEIF cond2+=expr_booleana THEN (s2=bloc_sentencies {Vector<Long> subVector = new Vector<>(); subVector.addAll($s2.trad); vectorSentencies.add(subVector);})*)*
+  (ELSE (s3=bloc_sentencies {tradFinal.addAll($s3.trad);})*)? ENDIF
+{
+
     if ($cond.tipus != 'B') {
         System.out.println("Error: La condició de l'IF ha de ser booleana, però s'ha trobat '" + $cond.tipus + "'.");
         errorSemantico = true;
     }
-   if ($cond2.tipus != null && $cond2.tipus != 'B') {
-         System.out.println("Error: La condició d'un ELSEIF ha de ser booleana, però s'ha trobat '" + $cond2.tipus + "'.");
-         errorSemantico = true;
+
+    for (ExprContext ctx : $cond2) {
+        if (ctx.tipus != 'B') {
+            System.out.println("Error: La condició d'un ELSEIF ha de ser booleana, però s'ha trobat '" + ctx.tipus + "'.");
+            errorSemantico = true;
+        }
     }
-    };
+
+    // Càlcul de salts
+    Long distFinal = 0L;
+    for (int i = 0; i < vectorSentencies.size(); i++) {
+        distFinal += vectorSentencies.get(i).size() + 3L;
+        distFinal += $cond2.get(i).trad.size();
+    }
+
+    // Generació de codi intermitg IF
+    $trad = $cond.trad;
+    $trad.add(x.IFEQ);
+    Long salt = tradCondicio.size() + 6L;
+    $trad.add(x.nByte(salt, 2));
+    $trad.add(x.nByte(salt, 1));
+
+    $trad.addAll(tradCondicio);
+
+    // Processament ELSEIF
+    for (int i = 0; i < $cond2.size(); i++) {
+        $trad.add(x.GOTO);
+        salt = distFinal + (3L * ($cond2.size() - i));
+        $trad.add(x.nByte(salt, 2));
+        $trad.add(x.nByte(salt, 1));
+
+        $trad.addAll($cond2.get(i).trad);
+        $trad.add(x.IFEQ);
+        salt = vectorSentencies.get(i).size() + 6L;
+        $trad.add(x.nByte(salt, 2));
+        $trad.add(x.nByte(salt, 1));
+
+        $trad.addAll(vectorSentencies.get(i));
+
+        distFinal -= 3 + vectorSentencies.get(i).size() + $cond2.get(i).trad.size();
+    }
+
+    // GOTO final per a ELSE
+    $trad.add(x.GOTO);
+    salt = tradFinal.size() + 3L;
+    $trad.add(x.nByte(salt, 2));
+    $trad.add(x.nByte(salt, 1));
+
+    $trad.addAll(tradFinal);
+}
+;
 
 
-// Bucles (corregits segons enunciat)
+// Bucle
 bucle_mentre returns [Vector<Long> trad]
-    : WHILE cond=expr_booleana DO bloc_sentencies END_WHILE {
+@init {
+    $trad = new Vector<Long>(100);
+    Vector<Long> tradSentencies = new Vector<Long>(100);
+}
+: WHILE cond=expr_booleana DO (sent=bloc_sentencies {tradSentencies.addAll($sent.trad);})+ END_WHILE
+{
+    // Validació de tipus: la condició ha de ser booleana
     if ($cond.tipus != 'B') {
         System.out.println("Error: La condició del WHILE ha de ser booleana, però s'ha trobat '" + $cond.tipus + "'.");
         errorSemantico = true;
+    } else {
+
+        Long iniciBucle = (long) $trad.size();
+
+        // condició while
+        $trad.addAll($cond.trad);
+        $trad.add(x.IFEQ);
+
+        // Calcula el salt -> condició és falsa
+        Long saltSortida = tradSentencies.size() + 6L;
+        $trad.add(x.nByte(saltSortida, 2));
+        $trad.add(x.nByte(saltSortida, 1));
+
+
+        $trad.addAll(tradSentencies);
+
+        // GOTO sortida bucle
+        Long saltInici = 0L - $trad.size();
+        $trad.add(x.GOTO);
+        $trad.add(x.nByte(saltInici, 2));
+        $trad.add(x.nByte(saltInici, 1));
     }
 };
+
 
 number returns [char tipus]
     : n=NUMBER { $tipus = 'I'; }
 ;
 
+// Bucle per (for)
 bucle_per returns [Vector<Long> trad]
-    : FOR ID IN RANG LPAREN num1=number (COMMA num2=number)? RPAREN DO bloc_sentencies END_FOR {
+@init {
+    $trad = new Vector<Long>(100);
+    Vector<Long> tradSentencies = new Vector<Long>(100);
+}
+: FOR id=ID IN RANG LPAREN num1=number (COMMA num2=number)? RPAREN DO (s=bloc_sentencies {tradSentencies.addAll($s.trad);})* END_FOR
+{
+    // Validació de tipus dels límits del bucle
     if ($num1.tipus != 'I' || ($num2.text != null && $num2.tipus != 'I')) {
-        System.out.println("Error: Els límits del FOR han de ser enters");
+        System.out.println("Error: Els límits del FOR han de ser enters.");
         errorSemantico = true;
+    } else if (!TS.existeix($id.text)) {
+        System.out.println("Error: Variable '" + $id.text + "' no declarada.");
+        notifyErrorListeners($id, "Error: Variable '" + $id.text + "' no declarada.", null);
+    } else {
+        Registre r = TS.obtenir($id.text);
+
+        if (r.getTipus() != 'I') {
+            notifyErrorListeners($id, "Error: La variable '" + $id.text + "' ha de ser de tipus enter.", null);
+        } else {
+            // Init variable del for
+            Long adrecaTemp = x.addConstant("I", $num1.text);
+            $trad.add(x.LDC_W);
+            $trad.add(x.nByte(adrecaTemp, 2));
+            $trad.add(x.nByte(adrecaTemp, 1));
+            $trad.add(x.ISTORE);
+            $trad.add(new Long(r.getAdreca()));
+
+
+            Long iniciBucle = (long) $trad.size();
+
+            // carrega i superior
+            $trad.add(x.ILOAD);
+            $trad.add(new Long(r.getAdreca()));
+
+            adrecaTemp = x.addConstant("I", $num2.text != null ? $num2.text : "1");
+            $trad.add(x.LDC_W);
+            $trad.add(x.nByte(adrecaTemp, 2));
+            $trad.add(x.nByte(adrecaTemp, 1));
+
+            // Comparació
+            $trad.add(x.IF_ICMPGE);
+            Long saltSortida = tradSentencies.size() + 6L;
+            $trad.add(x.nByte(saltSortida, 2));
+            $trad.add(x.nByte(saltSortida, 1));
+
+            $trad.addAll(tradSentencies);
+
+            // Increment de la variable
+            $trad.add(x.ILOAD);
+            $trad.add(new Long(r.getAdreca()));
+
+            adrecaTemp = x.addConstant("I", "1");
+            $trad.add(x.LDC_W);
+            $trad.add(x.nByte(adrecaTemp, 2));
+            $trad.add(x.nByte(adrecaTemp, 1));
+
+            $trad.add(x.IADD);
+            $trad.add(x.ISTORE);
+            $trad.add(new Long(r.getAdreca()));
+
+            // Tornar a inici
+            Long saltInici = 0L - ($trad.size() - iniciBucle);
+            $trad.add(x.GOTO);
+            $trad.add(x.nByte(saltInici, 2));
+            $trad.add(x.nByte(saltInici, 1));
+        }
     }
 };
 
-// Crida a acció (com una funció)
+
+// Crida a acció
 crida_accio returns [Vector<Long> trad]
     : ID LPAREN (expr (COMMA expr)*)? RPAREN;
 
-// Instruccions d'entrada/sortida (corregides)
+// Instruccions d'entrada/sortida
+// Instruccions d'entrada/sortida
 instruccio_io returns [Vector<Long> trad]
-    : READ LPAREN ID (COLON tipus_basic)? RPAREN
-              | WRITE LPAREN expr (COMMA expr)* RPAREN
-              | WRITELN LPAREN (expr (COMMA expr)*)? RPAREN ;
+@init {
+    $trad = new Vector<Long>(100);
+}
+: READ LPAREN ID (COLON tipus_basic)?  RPAREN
+{
+    if (!TS.existeix($ID.text)) {
+        System.out.println("Error: Variable '" + $ID.text + "' no declarada.");
+        notifyErrorListeners($ID, "Error: Variable '" + $ID.text + "' no declarada.", null);
+    } else {
+        Registre r = TS.obtenir($ID.text);
+        switch (r.getTipus()) {
+            case 'R':
+                $trad.add(x.INVOKESTATIC);
+                $trad.add(x.nByte(x.mGetFloat,2));
+                $trad.add(x.nByte(x.mGetFloat,1));
+                $trad.add(x.FSTORE);
+                $trad.add(new Long(r.getAdreca()));
+                break;
+            case 'I':
+                $trad.add(x.INVOKESTATIC);
+                $trad.add(x.nByte(x.mGetInt,2));
+                $trad.add(x.nByte(x.mGetInt,1));
+                $trad.add(x.ISTORE);
+                $trad.add(new Long(r.getAdreca()));
+                break;
+            case 'B':
+                $trad.add(x.INVOKESTATIC);
+                $trad.add(x.nByte(x.mGetBoolean,2));
+                $trad.add(x.nByte(x.mGetBoolean,1));
+                $trad.add(x.ISTORE);
+                $trad.add(new Long(r.getAdreca()));
+                break;
+        }
+    }
+}
+
+// WRITE i WRITELN
+| WRITE LPAREN e1=expr {
+    $trad = $e1.trad;
+    $trad.add(x.INVOKESTATIC);
+    switch ($e1.tipus) {
+        case 'R':
+            $trad.add(x.nByte(x.mPutFloat,2));
+            $trad.add(x.nByte(x.mPutFloat,1));
+            break;
+        case 'I':
+            $trad.add(x.nByte(x.mPutInt,2));
+            $trad.add(x.nByte(x.mPutInt,1));
+            break;
+        case 'B':
+            $trad.add(x.nByte(x.mPutBoolean,2));
+            $trad.add(x.nByte(x.mPutBoolean,1));
+            break;
+    }
+}(COMMA e2=expr {
+    $trad.addAll($e2.trad);
+    $trad.add(x.INVOKESTATIC);
+    switch ($e2.tipus) {
+        case 'R':
+            $trad.add(x.nByte(x.mPutFloat,2));
+            $trad.add(x.nByte(x.mPutFloat,1));
+            break;
+        case 'I':
+            $trad.add(x.nByte(x.mPutInt,2));
+            $trad.add(x.nByte(x.mPutInt,1));
+            break;
+        case 'B':
+            $trad.add(x.nByte(x.mPutBoolean,2));
+            $trad.add(x.nByte(x.mPutBoolean,1));
+            break;
+    }
+})* RPAREN
+
+// WRITELN
+| WRITELN LPAREN e1=expr {
+    $trad = $e1.trad;
+    $trad.add(x.INVOKESTATIC);
+    switch ($e1.tipus) {
+        case 'R':
+            $trad.add(x.nByte(x.mPutFloat,2));
+            $trad.add(x.nByte(x.mPutFloat,1));
+            break;
+        case 'I':
+            $trad.add(x.nByte(x.mPutInt,2));
+            $trad.add(x.nByte(x.mPutInt,1));
+            break;
+        case 'B':
+            $trad.add(x.nByte(x.mPutBoolean,2));
+            $trad.add(x.nByte(x.mPutBoolean,1));
+            break;
+    }
+    // Afegim salt de línia
+    Long saltLinia = x.addConstant("S", "\n");
+    $trad.add(x.LDC_W);
+    $trad.add(x.nByte(saltLinia,2));
+    $trad.add(x.nByte(saltLinia,1));
+    $trad.add(x.INVOKESTATIC);
+    $trad.add(x.nByte(x.mPutString,2));
+    $trad.add(x.nByte(x.mPutString,1));
+}(COMMA e2=expr {
+    $trad.addAll($e2.trad);
+    $trad.add(x.INVOKESTATIC);
+    switch ($e2.tipus) {
+        case 'R':
+            $trad.add(x.nByte(x.mPutFloat,2));
+            $trad.add(x.nByte(x.mPutFloat,1));
+            break;
+        case 'I':
+            $trad.add(x.nByte(x.mPutInt,2));
+            $trad.add(x.nByte(x.mPutInt,1));
+            break;
+        case 'B':
+            $trad.add(x.nByte(x.mPutBoolean,2));
+            $trad.add(x.nByte(x.mPutBoolean,1));
+            break;
+    }
+    // Salt de línia després de cada element
+    $trad.add(x.LDC_W);
+    $trad.add(x.nByte(saltLinia,2));
+    $trad.add(x.nByte(saltLinia,1));
+    $trad.add(x.INVOKESTATIC);
+    $trad.add(x.nByte(x.mPutString,2));
+    $trad.add(x.nByte(x.mPutString,1));
+})* RPAREN;
 
 // Tipus bàsics
 tipus_basic : INTEGER | REAL | BOOLEAN;
 
 
-// Palabras clave
+// Paraules clau
 PROGRAM: 'programa';
 END_PROGRAM: 'fprograma';
 TYPE: 'tipus';
@@ -412,7 +692,7 @@ RANG: 'rang';
 ENT: 'ent';
 ENTSOR: 'entsor';
 
-// Operadores y símbolos
+// Operadors i simbols
 NEG: '~';
 ASSIGN: ':=';
 PLUS: '+';
@@ -439,14 +719,14 @@ RPAREN: ')';
 LBRACKET: '[';
 RBRACKET: ']';
 
-// Identificadores y Literales
+// Identificadores i literals
 ID: [a-zA-Z][a-zA-Z0-9]*;
 NUMBER: [0-9]+;
 REAL_NUMBER: [0-9]+('.'[0-9]+)?([eE][-+]?[0-9]+)?;
 BOOLEAN_LITERAL: 'cert' | 'fals';
 STRING: '"' .*? '"';
 
-// Espacios y Comentarios
+// Espais i comentaris
 WS: [ \t\r\n]+ -> skip;
 LINE_COMMENT: '//' ~[\r\n]* -> skip;
 BLOCK_COMMENT: '/*' .*? '*/' -> skip;
